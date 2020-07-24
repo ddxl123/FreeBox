@@ -1,25 +1,21 @@
 ```
-
-import 'dart:typed_data';
-import 'dart:ui';
-
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 class FreeBox extends StatefulWidget {
   FreeBox({
-    @required this.drawerManager,
-    @required this.width,
-    @required this.height,
-    this.floatDrawer = const <Widget>[],
+    @required this.children,
+    @required this.backgroundColor,
+    @required this.boxWidth,
+    @required this.boxHeight,
+    @required this.eventWidth,
+    @required this.eventHeight,
   });
-  final DrawerManager drawerManager;
-
-  ///悬浮在 [FreeBox] 上的固定控件
-  final List<Widget> floatDrawer;
-
-  final double width;
-  final double height;
+  final List<Positioned> children;
+  final Color backgroundColor;
+  final double boxWidth;
+  final double boxHeight;
+  final double eventWidth;
+  final double eventHeight;
 
   @override
   State<StatefulWidget> createState() {
@@ -28,196 +24,97 @@ class FreeBox extends StatefulWidget {
 }
 
 class _FreeBox extends State<FreeBox> {
+  double _scale = 1;
   double _lastScale = 1;
-  Offset _lastPosition = Offset.zero;
 
-  Offset _endPosition;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.drawerManager._rebuild = () {
-      setState(() {});
-    };
-  }
+  Offset _offset = Offset(0, 0);
+  Offset _lastOffset = Offset(0, 0);
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      child: CustomPaint(
-        painter: FreeBoxPainter(widget.drawerManager, widget.width, widget.height),
-        child: Container(
-          color: Colors.red,
-          width: widget.width,
-          height: widget.height,
-          child: Stack(children: widget.floatDrawer),
+      onScaleStart: (details) {
+        _lastScale = 1;
+        _lastOffset = details.localFocalPoint;
+      },
+      onScaleUpdate: (details) {
+        double deltaScale = details.scale - _lastScale;
+        _scale *= 1 + deltaScale;
+        _lastScale = details.scale;
+
+        Offset pivotDeltaOffset = (_offset - details.localFocalPoint) * deltaScale;
+        _offset += pivotDeltaOffset;
+
+        Offset deltaOffset = details.localFocalPoint - _lastOffset;
+        _offset += deltaOffset;
+        _lastOffset = details.localFocalPoint;
+        setState(() {});
+      },
+      child: Container(
+        alignment: Alignment.center,
+        color: widget.backgroundColor,
+        //视觉区域、触摸区域
+        width: widget.boxWidth,
+        height: widget.boxHeight,
+        child: Stack(
+          children: <Widget>[
+            Positioned(
+              //内部事件区域
+              width: widget.eventWidth,
+              height: widget.eventHeight,
+              child: Transform.translate(
+                offset: _offset,
+                child: Transform.scale(
+                  alignment: Alignment.topLeft,
+                  scale: _scale,
+                  child: Stack(
+                    children: widget.children,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        isComplex: true,
       ),
-      onScaleStart: (ScaleStartDetails details) {
-        _endPosition = details.localFocalPoint;
-        scaleAndPositionStart(details);
-        widget.drawerManager._isCanUseSelectSingleDrawer = true;
+    );
+  }
+}
+
+class MyButton extends StatefulWidget {
+  MyButton({@required this.child});
+  final Widget child;
+  @override
+  State<StatefulWidget> createState() {
+    return _MyButton();
+  }
+}
+
+class _MyButton extends State<MyButton> {
+  Color _color = Colors.yellow;
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      child: Container(
+        width: 100,
+        height: 100,
+        color: _color,
+        child: widget.child,
+      ),
+      onPointerDown: (event) {
+        _color = Colors.grey;
         setState(() {});
       },
-      onScaleUpdate: (ScaleUpdateDetails details) {
-        _endPosition = details.localFocalPoint;
-        scaleAndPositionUpdate(details);
-        widget.drawerManager._isCanUseSelectSingleDrawer = false;
+      onPointerCancel: (event) {
+        _color = Colors.yellow;
         setState(() {});
       },
-      onScaleEnd: (ScaleEndDetails details) {
-        widget.drawerManager.useSelectedSingleDrawer(_endPosition);
-        print("object");
+      onPointerUp: (event) {
+        _color = Colors.yellow;
         setState(() {});
       },
     );
   }
-
-  void scaleAndPositionStart(ScaleStartDetails details) {
-    _lastScale = 1;
-    _lastPosition = details.localFocalPoint;
-  }
-
-  void scaleAndPositionUpdate(ScaleUpdateDetails details) {
-    //在每次缩放的基础上缩放
-    widget.drawerManager._scale *= (1 + (details.scale - _lastScale));
-    //(当前位置-轴点)*缩放增量+轴点-上个位置，若是“=”而非“+=”,则会出现一个问题：在每次end后再start，轴点会瞬变
-    widget.drawerManager._position += (widget.drawerManager.position - details.localFocalPoint) * (details.scale - _lastScale) + details.localFocalPoint - _lastPosition;
-
-    _lastScale = details.scale;
-    _lastPosition = details.localFocalPoint;
-  }
 }
 
-///
-///
-///
-///
-///
-class FreeBoxPainter extends CustomPainter {
-  FreeBoxPainter(this.drawerManager, this.width, this.height);
-  final DrawerManager drawerManager;
-  final double width;
-  final double height;
-  Float64List float64list;
-  @override
-  void paint(Canvas canvas, Size size) {
-    clipRect(canvas);
-    translateAndScale(canvas);
-    drawContent(canvas);
-  }
-
-  void clipRect(Canvas canvas) {
-    final path = Path()
-      ..addRect(
-        Rect.fromPoints(Offset.zero, Offset(width, height)),
-      );
-    canvas.clipPath(path);
-  }
-
-  void translateAndScale(Canvas canvas) {
-    //先平移后缩放,遵守准则：不让平移受缩放影响
-    canvas.translate(drawerManager.position.dx, drawerManager.position.dy);
-    canvas.scale(drawerManager.scale);
-  }
-
-  void drawContent(Canvas canvas) {
-    drawerManager._drawers.forEach((SingleDrawer item) {
-      //渲染背景
-      canvas.drawRect(item.drawerRect, item.drawerPaint);
-      //渲染文本
-      item.textPainter.paint(canvas, item.drawerRect.topLeft);
-    });
-  }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) => true;
-}
-
-///
-///
-///
-///
-///
-///流程:
-///[addDrawer() → _drawers] → [rebuild() → repaint()]
-class DrawerManager {
-  ///整体位置
-  ///初始化的(0,0)位置必须在局部的左上角，才能和 [touchPosition] 相匹配
-  Offset _position = Offset.zero;
-  Offset get position => _position;
-
-  ///整体缩放
-  double _scale = 1;
-  double get scale => _scale;
-
-  ///全部的 [SingleDrawer]
-  List<SingleDrawer> _drawers = [];
-  List<SingleDrawer> get drawers => _drawers;
-
-  ///是否能执行选择
-  ///当前被选择的 [SingleDrawer]
-  bool _isCanUseSelectSingleDrawer = true;
-  SingleDrawer _selectedSingleDrawer;
-  SingleDrawer get selectedSingleDrawer => _selectedSingleDrawer;
-
-  ///重新渲染，以备事件外部调用此模块函数时，可以被rebuild
-  Function _rebuild;
-
-  void addDrawer(Offset position, String text) => {_drawers.add(SingleDrawer(position, text)), _rebuild()};
-  void useSelectedSingleDrawer(Offset touchPosition) {
-    if (_isCanUseSelectSingleDrawer == false) return;
-
-    ///上面的会覆盖掉下面的
-    _selectedSingleDrawer?.initDrawerStyle();
-    _selectedSingleDrawer = null;
-    _drawers.forEach((item) {
-      //先缩放后平移：不让平移受缩放影响
-      Offset drTopLeft = item.drawerRect.topLeft * scale + position;
-      Offset drBottomRight = Offset(item.drawerRect.width, item.drawerRect.height) * scale + drTopLeft;
-      Rect dr = Rect.fromPoints(drTopLeft, drBottomRight);
-      if (dr.contains(touchPosition)) {
-        _selectedSingleDrawer = item;
-      }
-    });
-    _selectedSingleDrawer?.resetDrawerStyle(color: Colors.yellow);
-  }
-}
-
-///
-///
-///
-///
-///
-class SingleDrawer {
-  String text;
-  TextPainter textPainter;
-  Offset drawerPosition;
-  Rect drawerRect;
-  Paint drawerPaint;
-
-  SingleDrawer(Offset pos, String txt) {
-    this.drawerPosition = pos;
-    //初始化文本
-    this.text = txt;
-    this.textPainter = TextPainter()
-      ..textDirection = TextDirection.ltr
-      ..text = TextSpan(text: txt)
-      ..layout();
-    //初始化背景：根据文本大小来判断背景大小
-    this.drawerRect = Rect.fromPoints(pos, pos + Offset(textPainter.size.width, textPainter.size.height));
-    this.drawerPaint = Paint()..color = Colors.green;
-  }
-
-  void initDrawerStyle() {
-    this.drawerPaint = Paint()..color = Colors.green;
-  }
-
-  void resetDrawerStyle({Color color}) {
-    this.drawerPaint = Paint()..color = color;
-  }
-}
 
 ```
